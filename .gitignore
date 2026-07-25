@@ -1,0 +1,46 @@
+# Node
+node_modules/
+
+# Vite / build
+dist/
+.vite/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# TypeScript
+*.tsbuildinfo
+
+# Misc
+coverage/
+.cache/
+coverage/
+
+# Local env
+.env.local
+
+# Dependency directories
+.pnp.cjs
+.pnp.loader.mjs
+
+# Generated lock files you don't want
+# (uncomment if you prefer to ignore lockfile)
+# package-lock.json
