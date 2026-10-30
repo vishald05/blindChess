@@ -68,6 +68,20 @@ export interface RoomState {
   clock: ClockSnapshot
 }
 
+export interface RematchRequest {
+  roomCode: string
+  playerToken: string
+}
+
+export type RematchStatus = 'idle' | 'requested' | 'agreed' | 'unavailable'
+
+export interface RematchState {
+  status: RematchStatus
+  requestedBy?: PlayerColor
+  agreedBy?: PlayerColor[]
+  reason?: 'opponent-disconnected' | 'opponent-left'
+}
+
 export interface RoomCreateRequest {
   name: string
   mode: VisibilityMode

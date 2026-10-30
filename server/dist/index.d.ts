@@ -31,6 +31,7 @@ type Room = {
         winner?: Color;
         draw: boolean;
     };
+    rematchRequested: Set<Color>;
 };
 export declare const rooms: Map<string, Room>;
 export declare function createGameServer(httpServer?: HttpServer, clockNow?: () => number): {

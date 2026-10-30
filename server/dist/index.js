@@ -58,6 +58,20 @@ function emitViews(io, roomCode, now) {
             io.to(player.socketId).emit('game:view', view(room, player, now));
     io.to(roomCode).emit('game:clock', snapshot(room, now));
 }
+function rematchState(room) {
+    const requested = [...room.rematchRequested];
+    if (requested.length === 0)
+        return { status: 'idle' };
+    if (requested.length === 2)
+        return { status: 'agreed', agreedBy: requested };
+    return { status: 'requested', requestedBy: requested[0] };
+}
+function emitRematch(io, roomCode, room) {
+    const state = rematchState(room);
+    io.to(roomCode).emit('game:rematch-state', state);
+    io.to(roomCode).emit('game:rematch-status', state);
+    io.to(roomCode).emit('game:rematch', state);
+}
 function adjudicateTimeout(room, now) {
     refreshClock(room, now);
     const timedOut = room.clock.activeColor;
@@ -90,6 +104,7 @@ export function createGameServer(httpServer = createServer(app), clockNow = () =
                 mode: request.mode, timer, chess: new Chess(),
                 players: new Map([[playerToken, { name: request.name.trim() || 'White', color: 'w', token: playerToken, socketId: socket.id }]]),
                 clock: { whiteMs: baseMs, blackMs: baseMs, activeColor: 'w', running: false },
+                rematchRequested: new Set(),
             };
             rooms.set(roomCode, room);
             socket.join(roomCode);
@@ -139,11 +154,57 @@ export function createGameServer(httpServer = createServer(app), clockNow = () =
                 return ack?.({ ok: false, error: 'You are not in that room.' });
             room.players.delete(request.playerToken);
             socket.leave(roomCode);
+            room.rematchRequested.clear();
             io.to(roomCode).emit('room:state', roomState(roomCode, room, clockNow, true, 'player-left'));
+            io.to(roomCode).emit('game:rematch-state', { status: 'unavailable', reason: 'opponent-left' });
+            io.to(roomCode).emit('game:rematch-status', { status: 'unavailable', reason: 'opponent-left' });
+            io.to(roomCode).emit('game:rematch', { status: 'unavailable', reason: 'opponent-left' });
             if (room.players.size === 0)
                 rooms.delete(roomCode);
             ack?.({ ok: true });
         });
+        const rematchRequest = (request, ack) => {
+            const reply = (value) => { if (typeof ack === 'function')
+                ack(value); };
+            if (!request || typeof request !== 'object')
+                return reply({ ok: false, error: 'Invalid rematch request.' });
+            const { roomCode, playerToken } = request;
+            if (typeof roomCode !== 'string' || typeof playerToken !== 'string' || !roomCode || !playerToken) {
+                return reply({ ok: false, error: 'Invalid rematch request.' });
+            }
+            const normalizedCode = roomCode.toUpperCase();
+            const room = rooms.get(normalizedCode);
+            const player = room?.players.get(playerToken);
+            if (!room || !player || player.socketId !== socket.id)
+                return reply({ ok: false, error: 'You are not a member of that room.' });
+            if (room.players.size !== 2 || [...room.players.values()].some((seat) => !seat.socketId)) {
+                const state = { status: 'unavailable', reason: [...room.players.values()].some((seat) => !seat.socketId) ? 'opponent-disconnected' : 'opponent-left' };
+                io.to(normalizedCode).emit('game:rematch-state', state);
+                io.to(normalizedCode).emit('game:rematch-status', state);
+                io.to(normalizedCode).emit('game:rematch', state);
+                return reply({ ok: false, error: 'Your opponent is unavailable.' });
+            }
+            if (room.rematchRequested.has(player.color)) {
+                emitRematch(io, normalizedCode, room);
+                return reply({ ok: true, duplicate: true });
+            }
+            room.rematchRequested.add(player.color);
+            if (room.rematchRequested.size < 2) {
+                emitRematch(io, normalizedCode, room);
+                return reply({ ok: true });
+            }
+            room.chess = new Chess();
+            room.lastMove = undefined;
+            room.timeoutResult = undefined;
+            const baseMs = room.timer.mode === 'timed' ? room.timer.baseSeconds * 1000 : 0;
+            room.clock = { whiteMs: baseMs, blackMs: baseMs, activeColor: 'w', running: room.timer.mode === 'timed', activeSince: room.timer.mode === 'timed' ? clockNow() : undefined };
+            emitRematch(io, normalizedCode, room);
+            io.to(normalizedCode).emit('room:state', roomState(normalizedCode, room, clockNow));
+            emitViews(io, normalizedCode, clockNow);
+            return reply({ ok: true });
+        };
+        socket.on('game:rematch-request', rematchRequest);
+        socket.on('game:rematch', rematchRequest);
         socket.on('game:move', (request, ack) => {
             const room = rooms.get(request.roomCode);
             const player = room?.players.get(request.playerToken);
@@ -218,6 +279,11 @@ export function createGameServer(httpServer = createServer(app), clockNow = () =
                 player.socketId = undefined;
                 player.disconnectedAt = Date.now();
                 io.to(roomCode).emit('room:state', roomState(roomCode, room, clockNow, true, 'opponent-disconnected'));
+                room.rematchRequested.clear();
+                const state = { status: 'unavailable', reason: 'opponent-disconnected' };
+                io.to(roomCode).emit('game:rematch-state', state);
+                io.to(roomCode).emit('game:rematch-status', state);
+                io.to(roomCode).emit('game:rematch', state);
             }
         });
     });

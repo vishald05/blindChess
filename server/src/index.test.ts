@@ -18,6 +18,29 @@ describe('online room protocol', () => {
     await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))))
   })
 
+  const setupRoom = async (timer?: { mode: 'timed'; baseSeconds: number; incrementSeconds: number }) => {
+    const http = createServer(httpApp)
+    createGameServer(http)
+    servers.push(http)
+    await new Promise<void>((resolve) => http.listen(0, resolve))
+    const address = http.address()
+    if (!address || typeof address === 'string') throw new Error('test server did not start')
+    const url = `http://localhost:${address.port}`
+    const white = connect(url); const black = connect(url)
+    clients.push(white, black)
+    await Promise.all([waitFor(white, 'connect'), waitFor(black, 'connect')])
+    const created = await new Promise<{ roomCode: string; playerToken: string }>((resolve) => white.emit('room:create', {
+      name: 'Alice', mode: 'normal', ...(timer ? { timer } : {}),
+    }, resolve))
+    const whiteView = waitFor(white, 'game:view')
+    const blackView = waitFor(black, 'game:view')
+    const joined = await new Promise<{ playerToken: string }>((resolve) => black.emit('room:join', {
+      name: 'Bob', roomCode: created.roomCode,
+    }, resolve))
+    await Promise.all([whiteView, blackView])
+    return { white, black, roomCode: created.roomCode, whiteToken: created.playerToken, blackToken: joined.playerToken }
+  }
+
   it('creates, joins, filters, validates, and resynchronizes a room', async () => {
     const http = createServer(httpApp)
     createGameServer(http)
@@ -145,6 +168,44 @@ describe('online room protocol', () => {
     }, resolve))
     expect(timedOut).toMatchObject({ ok: false, error: 'Time expired.' })
     expect(JSON.stringify(await result)).not.toContain('fen')
+  })
+
+  it('resets the game only after both players agree to a rematch', async () => {
+    const { white, black, roomCode, whiteToken, blackToken } = await setupRoom()
+    const firstView = waitFor<{ moveCount: number }>(black, 'game:view')
+    await new Promise<{ ok: boolean }>((resolve) => white.emit('game:move', {
+      roomCode, playerToken: whiteToken, move: { from: 'e2', to: 'e4' },
+    }, resolve))
+    expect((await firstView).moveCount).toBe(1)
+    const requested = waitFor<{ status: string; requestedBy: string }>(black, 'game:rematch-state')
+    const one = await new Promise<{ ok: boolean }>((resolve) => white.emit('game:rematch-request', { roomCode, playerToken: whiteToken }, resolve))
+    expect(one.ok).toBe(true)
+    expect(await requested).toMatchObject({ status: 'requested', requestedBy: 'w' })
+    const rematch = waitFor<{ moveCount: number; lastMove?: unknown; clock: { running: boolean } }>(black, 'game:view')
+    const agreed = waitFor<{ status: string }>(black, 'game:rematch-state')
+    const two = await new Promise<{ ok: boolean }>((resolve) => black.emit('game:rematch-request', { roomCode, playerToken: blackToken }, resolve))
+    expect(two.ok).toBe(true)
+    expect(await agreed).toMatchObject({ status: 'agreed' })
+    const fresh = await rematch
+    expect(fresh).toMatchObject({ moveCount: 0, clock: { running: false } })
+    expect(fresh.lastMove).toBeUndefined()
+  })
+
+  it('treats duplicate rematch requests as idempotent', async () => {
+    const { white, roomCode, whiteToken } = await setupRoom()
+    const first = await new Promise<{ ok: boolean; duplicate?: boolean }>((resolve) => white.emit('game:rematch-request', { roomCode, playerToken: whiteToken }, resolve))
+    const second = await new Promise<{ ok: boolean; duplicate?: boolean }>((resolve) => white.emit('game:rematch-request', { roomCode, playerToken: whiteToken }, resolve))
+    expect(first).toMatchObject({ ok: true })
+    expect(second).toMatchObject({ ok: true, duplicate: true })
+  })
+
+  it('reports an unavailable rematch when the opponent disconnects', async () => {
+    const { white, black, roomCode, whiteToken } = await setupRoom()
+    const status = waitFor<{ status: string; reason: string }>(white, 'game:rematch-state')
+    black.disconnect()
+    expect(await status).toMatchObject({ status: 'unavailable', reason: 'opponent-disconnected' })
+    const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => white.emit('game:rematch-request', { roomCode, playerToken: whiteToken }, resolve))
+    expect(result).toMatchObject({ ok: false, error: 'Your opponent is unavailable.' })
   })
 
   it('keeps clock requests safe with and without acknowledgements', async () => {
