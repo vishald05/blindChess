@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js';
 const pieceSymbols = ['p', 'n', 'b', 'r', 'q', 'k'];
-export function filterPosition(chess, playerColor, mode, lastMove) {
+export function filterPosition(chess, playerColor, mode, lastMove, clock = { mode: 'disabled', whiteMs: null, blackMs: null, running: false }) {
     const pieces = [];
     for (const file of 'abcdefgh') {
         for (let rank = 1; rank <= 8; rank += 1) {
@@ -42,6 +42,7 @@ export function filterPosition(chess, playerColor, mode, lastMove) {
         checkedKingSquare,
         moveCount: history.length,
         publicHistory: history,
+        clock,
     };
     function findKing(chess, color) {
         for (const file of 'abcdefgh') {
@@ -56,6 +57,19 @@ export function filterPosition(chess, playerColor, mode, lastMove) {
 }
 export function validateMove(chess, request) {
     return chess.move(request);
+}
+export function validateTimerConfig(config) {
+    if (!config || config.mode === 'disabled')
+        return { mode: 'disabled' };
+    if (config.mode !== 'timed' ||
+        !Number.isInteger(config.baseSeconds) ||
+        !Number.isInteger(config.incrementSeconds) ||
+        config.baseSeconds < 1 ||
+        config.baseSeconds > 86400 ||
+        config.incrementSeconds < 0 ||
+        config.incrementSeconds > 86400)
+        throw new Error('Invalid timer configuration.');
+    return { mode: 'timed', baseSeconds: config.baseSeconds, incrementSeconds: config.incrementSeconds };
 }
 export function legalDestinations(chess, playerColor, from, mode) {
     if (chess.turn() !== playerColor || chess.get(from)?.color !== playerColor)

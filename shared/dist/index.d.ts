@@ -2,6 +2,20 @@ import { Chess, type Color, type PieceSymbol, type Square } from 'chess.js';
 export type VisibilityMode = 'normal' | 'semi-blind' | 'blind-pro';
 export type PlayMethod = 'local' | 'online';
 export type PlayerColor = Color;
+export type TimerConfig = {
+    mode: 'disabled';
+} | {
+    mode: 'timed';
+    baseSeconds: number;
+    incrementSeconds: number;
+};
+export interface ClockSnapshot {
+    mode: TimerConfig['mode'];
+    whiteMs: number | null;
+    blackMs: number | null;
+    activeColor?: PlayerColor;
+    running: boolean;
+}
 export interface Player {
     id: string;
     name: string;
@@ -22,8 +36,8 @@ export interface AuthorizedView {
         from: Square;
         to: Square;
     };
-    status: 'playing' | 'checkmate' | 'stalemate' | 'draw' | 'resigned';
-    resultReason?: 'checkmate' | 'stalemate' | 'insufficient-material' | 'threefold-repetition' | 'fifty-move-rule' | 'draw';
+    status: 'playing' | 'checkmate' | 'stalemate' | 'draw' | 'resigned' | 'timeout';
+    resultReason?: 'checkmate' | 'stalemate' | 'insufficient-material' | 'threefold-repetition' | 'fifty-move-rule' | 'timeout' | 'timeout-insufficient-material' | 'draw';
     winner?: PlayerColor;
     checkedColor?: PlayerColor;
     checkedKingSquare?: Square;
@@ -33,6 +47,7 @@ export interface AuthorizedView {
         to: Square;
         san?: string;
     }>;
+    clock: ClockSnapshot;
 }
 export interface MoveRequest {
     from: Square;
@@ -54,10 +69,13 @@ export interface RoomState {
     players: RoomPlayer[];
     disconnected?: boolean;
     connectionStatus?: 'opponent-disconnected' | 'opponent-reconnected' | 'player-left';
+    timer: TimerConfig;
+    clock: ClockSnapshot;
 }
 export interface RoomCreateRequest {
     name: string;
     mode: VisibilityMode;
+    timer?: TimerConfig;
 }
 export interface RoomJoinRequest {
     name: string;
@@ -67,12 +85,24 @@ export interface RoomResumeRequest {
     roomCode: string;
     playerToken: string;
 }
+export interface ClockRequest {
+    roomCode: string;
+    playerToken: string;
+}
+export type ClockResponse = {
+    ok: true;
+    clock: ClockSnapshot;
+} | {
+    ok: false;
+    error: string;
+};
 declare const pieceSymbols: PieceSymbol[];
 export declare function filterPosition(chess: Chess, playerColor: PlayerColor, mode: VisibilityMode, lastMove?: {
     from: Square;
     to: Square;
-}): AuthorizedView;
+}, clock?: ClockSnapshot): AuthorizedView;
 export declare function validateMove(chess: Chess, request: MoveRequest): import("chess.js").Move;
+export declare function validateTimerConfig(config: TimerConfig | undefined): TimerConfig;
 export declare function legalDestinations(chess: Chess, playerColor: PlayerColor, from: Square, mode: VisibilityMode): LegalDestination[];
 export declare function boardSquares(orientation: PlayerColor): Square[];
 export declare function boardFromView(view: AuthorizedView): Record<string, PieceView>;

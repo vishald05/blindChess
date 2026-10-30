@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Chess, boardSquares, filterPosition, legalDestinations } from './index.js'
+import { Chess, boardSquares, filterPosition, legalDestinations, validateTimerConfig } from './index.js'
 
 describe('visibility filtering', () => {
   it('keeps own pieces and hides opponent identities in semi-blind mode', () => {
@@ -20,6 +20,11 @@ describe('visibility filtering', () => {
 })
 
 describe('canonical chess rules', () => {
+  it('validates timer configurations and preserves the disabled default', () => {
+    expect(validateTimerConfig(undefined)).toEqual({ mode: 'disabled' })
+    expect(validateTimerConfig({ mode: 'timed', baseSeconds: 60, incrementSeconds: 2 })).toEqual({ mode: 'timed', baseSeconds: 60, incrementSeconds: 2 })
+    expect(() => validateTimerConfig({ mode: 'timed', baseSeconds: 0, incrementSeconds: 0 })).toThrow()
+  })
   it('returns legal destinations without exposing blind capture occupancy', () => {
     const chess = new Chess()
     const normal = legalDestinations(chess, 'w', 'e2', 'normal')

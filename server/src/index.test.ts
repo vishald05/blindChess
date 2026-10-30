@@ -109,4 +109,80 @@ describe('online room protocol', () => {
     expect(resumed.ok).toBe(true)
     expect((await resumedView).pieces.some((piece) => piece.color === 'w')).toBe(false)
   })
+
+  it('uses server time for increments and adjudicates timeout without exposing hidden state', async () => {
+    let now = 1000
+    const http = createServer(httpApp)
+    createGameServer(http, () => now)
+    servers.push(http)
+    await new Promise<void>((resolve) => http.listen(0, resolve))
+    const address = http.address()
+    if (!address || typeof address === 'string') throw new Error('test server did not start')
+    const url = `http://localhost:${address.port}`
+    const white = connect(url); const black = connect(url)
+    clients.push(white, black)
+    await Promise.all([waitFor(white, 'connect'), waitFor(black, 'connect')])
+    const created = await new Promise<{ roomCode: string; playerToken: string }>((resolve) => white.emit('room:create', {
+      name: 'Alice', mode: 'semi-blind', timer: { mode: 'timed', baseSeconds: 1, incrementSeconds: 1 },
+    }, resolve))
+    const whiteInitial = waitFor(white, 'game:view')
+    const blackInitial = waitFor(black, 'game:view')
+    const joined = await new Promise<{ playerToken: string }>((resolve) => black.emit('room:join', {
+      name: 'Bob', roomCode: created.roomCode,
+    }, resolve))
+    await Promise.all([whiteInitial, blackInitial])
+    now += 900
+    const blackView = waitFor<{ clock: { whiteMs: number; blackMs: number } }>(black, 'game:view')
+    const moved = await new Promise<{ ok: boolean }>((resolve) => white.emit('game:move', {
+      roomCode: created.roomCode, playerToken: created.playerToken, move: { from: 'e2', to: 'e4' },
+    }, resolve))
+    expect(moved.ok).toBe(true)
+    expect((await blackView).clock.whiteMs).toBeGreaterThanOrEqual(1090)
+    now += 1100
+    const result = waitFor<{ clock: unknown; pieces: Array<{ type?: string }> }>(black, 'game:view')
+    const timedOut = await new Promise<{ ok: boolean; error?: string }>((resolve) => black.emit('game:move', {
+      roomCode: created.roomCode, playerToken: joined.playerToken, move: { from: 'e7', to: 'e5' },
+    }, resolve))
+    expect(timedOut).toMatchObject({ ok: false, error: 'Time expired.' })
+    expect(JSON.stringify(await result)).not.toContain('fen')
+  })
+
+  it('keeps clock requests safe with and without acknowledgements', async () => {
+    const http = createServer(httpApp)
+    createGameServer(http)
+    servers.push(http)
+    await new Promise<void>((resolve) => http.listen(0, resolve))
+    const address = http.address()
+    if (!address || typeof address === 'string') throw new Error('test server did not start')
+    const client = connect(`http://localhost:${address.port}`)
+    clients.push(client)
+    await waitFor(client, 'connect')
+
+    const created = await new Promise<{ roomCode: string; playerToken: string }>((resolve) => client.emit('room:create', {
+      name: 'Alice', mode: 'normal', timer: { mode: 'timed', baseSeconds: 1, incrementSeconds: 0 },
+    }, resolve))
+    const response = await new Promise<{ ok: boolean; clock?: { mode: string }; error?: string }>((resolve) => {
+      client.timeout(1000).emit('game:clock-request', {
+        roomCode: created.roomCode,
+        playerToken: created.playerToken,
+      }, (_error: Error | null, value: { ok: boolean; clock?: { mode: string }; error?: string }) => resolve(value))
+    })
+    expect(response).toMatchObject({ ok: true, clock: { mode: 'timed' } })
+
+    client.emit('game:clock-request', { roomCode: created.roomCode, playerToken: created.playerToken })
+    client.emit('game:clock-request', { roomCode: created.roomCode, playerToken: created.playerToken })
+    client.emit('game:clock-request', { roomCode: 'MISSING', playerToken: created.playerToken })
+    client.emit('game:clock-request', null)
+
+    const invalid = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      client.emit('game:clock-request', { roomCode: 'MISSING', playerToken: created.playerToken }, resolve)
+    })
+    expect(invalid).toEqual({ ok: false, error: 'You are not a member of that room.' })
+
+    const followUp = await new Promise<{ ok: boolean }>((resolve) => {
+      client.emit('game:clock-request', { roomCode: created.roomCode, playerToken: created.playerToken }, resolve)
+    })
+    expect(followUp.ok).toBe(true)
+    expect(client.connected).toBe(true)
+  })
 })

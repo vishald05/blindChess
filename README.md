@@ -28,6 +28,7 @@ The application is built around a normal, authoritative chess position. Visibili
 - Stalemate and draw-reason announcements
 - Optional Web Audio check/checkmate feedback with mute control
 - Responsive pale-blue interface for desktop and mobile
+- Optional chess clocks with increment time controls
 - Shared TypeScript types and integration tests
 
 ## Game modes
@@ -77,6 +78,16 @@ Blind-Pro hides the opponent's current pieces completely:
 Blind-Pro is a hidden-information interface, not a chess variant. The server still knows the complete position and enforces normal chess rules.
 
 ## How to play
+
+### Time controls
+
+Both Pass N Play and Online Play support **No timer** or a server-authoritative timed game. Timed games offer these base-time presets: 1, 3, 5, 10, 15, and 30 minutes. Increment presets are 0, 1, 2, 3, 5, 10, and 15 seconds. The selected control is shown in standard notation such as `3|0`, `5|3`, or `10|5`.
+
+In Online Play, the room creator selects the timer and the joining player receives the room's settings without being able to change them. The server owns both clocks, subtracts elapsed time from only the active player, awards increment only after an accepted move, and stops the clocks on every terminal result. Reconnection restores the current clock rather than resetting it. Clients animate the displayed countdown and periodically resynchronize with the server; client-provided time is never trusted.
+
+In Pass N Play, the first clock starts when White confirms readiness. In hidden-information modes, a move pauses the clock during the privacy handoff and the next clock starts only after the next player presses the ready button. Timestamp-based calculations prevent browser tab throttling from granting extra time.
+
+When a clock expires, the player normally loses on time. If the opponent has insufficient mating material according to the chess engine, the result is a timeout draw instead. Timers never become negative, invalid or out-of-turn moves never consume time or increment, and restart begins with the configured base time.
 
 ### Home screen
 
